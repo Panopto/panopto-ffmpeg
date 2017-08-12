@@ -227,6 +227,7 @@ static void register_all(void)
     REGISTER_MUXDEMUX(OMA,              oma);
     REGISTER_MUXER   (OPUS,             opus);
     REGISTER_DEMUXER (PAF,              paf);
+    REGISTER_DEMUXER (PANR,             panr)
     REGISTER_MUXDEMUX(PCM_ALAW,         pcm_alaw);
     REGISTER_MUXDEMUX(PCM_MULAW,        pcm_mulaw);
     REGISTER_MUXDEMUX(PCM_F64BE,        pcm_f64be);

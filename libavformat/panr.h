@@ -27,7 +27,8 @@
 #ifndef AVCODEC_PANR_H
 #define AVCODEC_PANR_H
 
-#define PANR_SIGNATURE ((uint32_t)'PANR')
+// Resolves to 'PANR'
+static const uint32_t sc_panrSignature = 1346457170;
 
 // File header
 //

@@ -27,15 +27,15 @@
 typedef struct PanrDemuxContext
 {
     RawSampleFileHeader fileHeader;
-    void* formatBlock;
+    uint8_t* formatBlock;
 } PanrDemuxContext;
 
-static const LONG c_cbMaxRawSampleHeader = sizeof(RawSampleHeader) + sizeof(LONGLONG) * 4;
+static const int32_t c_cbMaxRawSampleHeader = sizeof(RawSampleHeader) + sizeof(int64_t) * 4;
 
 static int read_probe(AVProbeData *p)
 {
     if (p->buf_size >= sizeof(RawSampleFileHeader) &&
-        !memcmp(p->buf, PANR_SIGNATURE, strlen(PANR_SIGNATURE)))
+        !memcmp(p->buf, PANR_SIGNATURE, sizeof(PANR_SIGNATURE)))
     {
         RawSampleFileHeader* pTestHeader = (RawSampleFileHeader*) p->buf;
         // only V1 is supported
@@ -52,6 +52,7 @@ static int read_header(AVFormatContext * pFormatContext)
 {
     PanrDemuxContext *pDemuxContext = pFormatContext->priv_data;
     AVIOContext     *pBuffer = pFormatContext->pb;
+    WAVEFORMATEX    *pWaveFormat;
     AVStream        *avst = NULL;
     int ret = 0;
 
@@ -69,7 +70,7 @@ static int read_header(AVFormatContext * pFormatContext)
         goto Cleanup;
     }
     
-    if (avio_read(pBuffer, &pDemuxContext->formatBlock, pDemuxContext->fileHeader.nbformat)
+    if (avio_read(pBuffer, pDemuxContext->formatBlock, pDemuxContext->fileHeader.nbformat)
             != pDemuxContext->fileHeader.nbformat)
     {
         ret = AVERROR_INVALIDDATA;
@@ -98,7 +99,7 @@ static int read_header(AVFormatContext * pFormatContext)
             goto Cleanup;
         }
 
-        WAVEFORMATEX* pWaveFormat = (WAVEFORMATEX*)pDemuxContext->formatBlock;
+        pWaveFormat = (WAVEFORMATEX*)pDemuxContext->formatBlock;
         avst->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
         avst->codecpar->codec_id = AV_CODEC_ID_AAC;
         avst->codecpar->codec_tag = 0;
@@ -122,7 +123,6 @@ Cleanup:
 static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
 {
     PanrDemuxContext *pDemuxContext = ctx->priv_data;
-    uint32_t        count, offset;
     int             ret = 0;
     RawSampleHeader rawHeader;
 
@@ -176,7 +176,7 @@ static int read_close(AVFormatContext *ctx)
     return 0;
 }
 
-AVInputFormat ff_paf_demuxer = {
+AVInputFormat ff_panr_demuxer = {
     .name = "panr",
     .long_name = NULL_IF_CONFIG_SMALL("Panopto Raw File Parser"),
     .priv_data_size = sizeof(PanrDemuxContext),

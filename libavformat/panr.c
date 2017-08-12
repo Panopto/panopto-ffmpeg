@@ -35,7 +35,7 @@ static const int32_t c_cbMaxRawSampleHeader = sizeof(RawSampleHeader) + sizeof(i
 static int read_probe(AVProbeData *p)
 {
     if (p->buf_size >= sizeof(RawSampleFileHeader) &&
-        !memcmp(p->buf, PANR_SIGNATURE, sizeof(PANR_SIGNATURE)))
+        ((uint32_t*)p->buf)[0] == sc_panrSignature)
     {
         RawSampleFileHeader* pTestHeader = (RawSampleFileHeader*) p->buf;
         // only V1 is supported
@@ -46,6 +46,58 @@ static int read_probe(AVProbeData *p)
     }
 
     return 0;
+}
+
+static int get_width_and_height_from_format(GUID* format_type, int8_t* format_block, int* outWidth, int* outHeight)
+{
+    int ret = 0;
+    if (memcmp(format_type, &FORMAT_VideoInfo, sizeof(GUID) == 0))
+    {
+        VIDEOINFOHEADER* vih = (VIDEOINFOHEADER*)format_block;
+        *outWidth = vih->bmiHeader.biWidth;
+        *outHeight = vih->bmiHeader.biHeight;
+    }
+    else if (memcmp(format_type, &FORMAT_VideoInfo2, sizeof(GUID) == 0))
+    {
+        VIDEOINFOHEADER2* vih = (VIDEOINFOHEADER2*)format_block;
+        *outWidth = vih->bmiHeader.biWidth;
+        *outHeight = vih->bmiHeader.biHeight;
+    }
+    else if (memcmp(format_type, &FORMAT_MPEGVideo, sizeof(GUID) == 0))
+    {
+        MPEG1VIDEOINFO* vih = (MPEG1VIDEOINFO*)format_block;
+        *outWidth = vih->hdr.bmiHeader.biWidth;
+        *outHeight = vih->hdr.bmiHeader.biHeight;
+    }
+    else if (memcmp(format_type, &FORMAT_MPEGStreams, sizeof(GUID) == 0))
+    {
+        AM_MPEGSYSTEMTYPE* vih = (AM_MPEGSYSTEMTYPE*)format_block;
+        if (vih->cStreams < 1)
+        {
+            ret = AVERROR_INVALIDDATA;
+            goto Cleanup;
+        }
+
+        ret = get_width_and_height_from_format(
+            &vih->Streams[0].mt.formattype,
+            vih->Streams[0].bFormat,
+            outWidth,
+            outHeight);
+    }
+    else if (memcmp(format_type, &FORMAT_MPEG2Video, sizeof(GUID) == 0))
+    {
+        MPEG2VIDEOINFO* vih = (MPEG2VIDEOINFO*)format_block;
+        *outWidth = vih->hdr.bmiHeader.biWidth;
+        *outHeight = vih->hdr.bmiHeader.biHeight;
+    }
+    else
+    {
+        ret = AVERROR_INVALIDDATA;
+        goto Cleanup;
+    }
+
+Cleanup:
+    return ret;
 }
 
 static int read_header(AVFormatContext * pFormatContext)
@@ -89,6 +141,15 @@ static int read_header(AVFormatContext * pFormatContext)
         avst->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
         avst->codecpar->codec_id = AV_CODEC_ID_H264;
 
+        if (get_width_and_height_from_format(&pDemuxContext->fileHeader.formattype,
+                                pDemuxContext->formatBlock,
+                                &avst->codecpar->width,
+                                &avst->codecpar->height) != 0)
+        {
+            ret = AVERROR_INVALIDDATA;
+            goto Cleanup;
+        }
+        
         // for now don't bother with the rest if we don't need to...
     }
     else if (memcmp(&pDemuxContext->fileHeader.majortype, &MEDIATYPE_Audio, sizeof(GUID) == 0))

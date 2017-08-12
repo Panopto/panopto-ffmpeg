@@ -26,20 +26,18 @@
 
 typedef struct PanrDemuxContext
 {
-    RawSampleFileHeader fileHeader;
-    uint8_t* formatBlock;
+    PanrSampleFileHeader file_header;
+    uint8_t* format_block;
 } PanrDemuxContext;
 
-static const int32_t c_cbMaxRawSampleHeader = sizeof(RawSampleHeader) + sizeof(int64_t) * 4;
-
-static int read_probe(AVProbeData *p)
+static int read_probe(AVProbeData *probe_data)
 {
-    if (p->buf_size >= sizeof(RawSampleFileHeader) &&
-        ((uint32_t*)p->buf)[0] == sc_panrSignature)
+    if (probe_data->buf_size >= sizeof(PanrSampleFileHeader) &&
+            ((uint32_t*)probe_data->buf)[0] == panr_signature)
     {
-        RawSampleFileHeader* pTestHeader = (RawSampleFileHeader*) p->buf;
+        PanrSampleFileHeader* test_header = (PanrSampleFileHeader*) probe_data->buf;
         // only V1 is supported
-        if (pTestHeader->ffVersion == 1)
+        if (test_header->version == 1)
         {
             return AVPROBE_SCORE_MAX;
         }
@@ -48,131 +46,71 @@ static int read_probe(AVProbeData *p)
     return 0;
 }
 
-static int get_width_and_height_from_format(GUID* format_type, int8_t* format_block, int* outWidth, int* outHeight)
+static int read_header(AVFormatContext * format_ctx)
 {
-    int ret = 0;
-    if (memcmp(format_type, &FORMAT_VideoInfo, sizeof(GUID)) == 0)
-    {
-        VIDEOINFOHEADER* vih = (VIDEOINFOHEADER*)format_block;
-        *outWidth = vih->bmiHeader.biWidth;
-        *outHeight = vih->bmiHeader.biHeight;
-    }
-    else if (memcmp(format_type, &FORMAT_VideoInfo2, sizeof(GUID)) == 0)
-    {
-        VIDEOINFOHEADER2* vih = (VIDEOINFOHEADER2*)format_block;
-        *outWidth = vih->bmiHeader.biWidth;
-        *outHeight = vih->bmiHeader.biHeight;
-    }
-    else if (memcmp(format_type, &FORMAT_MPEGVideo, sizeof(GUID)) == 0)
-    {
-        MPEG1VIDEOINFO* vih = (MPEG1VIDEOINFO*)format_block;
-        *outWidth = vih->hdr.bmiHeader.biWidth;
-        *outHeight = vih->hdr.bmiHeader.biHeight;
-    }
-    else if (memcmp(format_type, &FORMAT_MPEGStreams, sizeof(GUID)) == 0)
-    {
-        AM_MPEGSYSTEMTYPE* vih = (AM_MPEGSYSTEMTYPE*)format_block;
-        if (vih->cStreams < 1)
-        {
-            ret = AVERROR_INVALIDDATA;
-            goto Cleanup;
-        }
-
-        ret = get_width_and_height_from_format(
-            &vih->Streams[0].mt.formattype,
-            vih->Streams[0].bFormat,
-            outWidth,
-            outHeight);
-    }
-    else if (memcmp(format_type, &FORMAT_MPEG2Video, sizeof(GUID)) == 0)
-    {
-        MPEG2VIDEOINFO* vih = (MPEG2VIDEOINFO*)format_block;
-        *outWidth = vih->hdr.bmiHeader.biWidth;
-        *outHeight = vih->hdr.bmiHeader.biHeight;
-    }
-    else
-    {
-        ret = AVERROR_INVALIDDATA;
-        goto Cleanup;
-    }
-
-Cleanup:
-    return ret;
-}
-
-static int read_header(AVFormatContext * pFormatContext)
-{
-    PanrDemuxContext *pDemuxContext = pFormatContext->priv_data;
-    AVIOContext     *pBuffer = pFormatContext->pb;
-    WAVEFORMATEX    *pWaveFormat;
+    PanrDemuxContext *demux_ctx = format_ctx->priv_data;
+    AVIOContext     *pBuffer = format_ctx->pb;
+    WAVEFORMATEX    *wave_format;
     AVStream        *avst = NULL;
     int ret = 0;
 
-    if (avio_read(pBuffer, (uint8_t*) &pDemuxContext->fileHeader, sizeof(RawSampleFileHeader))
-        != sizeof(RawSampleFileHeader))
+    if (avio_read(pBuffer, (uint8_t*) &demux_ctx->file_header, sizeof(PanrSampleFileHeader))
+            != sizeof(PanrSampleFileHeader))
     {
         ret = AVERROR_INVALIDDATA;
         goto Cleanup;
     }
 
-    pDemuxContext->formatBlock = av_malloc(pDemuxContext->fileHeader.nbformat);
-    if (!pDemuxContext->formatBlock)
+    demux_ctx->format_block = av_malloc(demux_ctx->file_header.cb_format);
+    if (!demux_ctx->format_block)
     {
         ret = AVERROR(ENOMEM);
         goto Cleanup;
     }
     
-    if (avio_read(pBuffer, (uint8_t*) pDemuxContext->formatBlock, pDemuxContext->fileHeader.nbformat)
-            != pDemuxContext->fileHeader.nbformat)
+    if (avio_read(pBuffer, (uint8_t*) demux_ctx->format_block, demux_ctx->file_header.cb_format)
+            != demux_ctx->file_header.cb_format)
     {
         ret = AVERROR_INVALIDDATA;
         goto Cleanup;
     }
     
-    avst = avformat_new_stream(pFormatContext, NULL);
+    avst = avformat_new_stream(format_ctx, NULL);
     if (!avst)
     {
         ret = AVERROR(ENOMEM);
         goto Cleanup;
     }
 
+    // use parse_full here - make the decoder 
+    // do all the hard work about detection. We'll
+    // just manage proper unpacking
     avst->nb_frames = 0;
     avst->need_parsing = AVSTREAM_PARSE_FULL;
 
-    if (memcmp(&pDemuxContext->fileHeader.majortype, &MEDIATYPE_Video, sizeof(GUID)) == 0)
+    if (memcmp(&demux_ctx->file_header.majortype, &MEDIATYPE_Video, sizeof(GUID)) == 0)
     {
         avst->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
         avst->codecpar->codec_id = AV_CODEC_ID_H264;
-
-        /*if (get_width_and_height_from_format(&pDemuxContext->fileHeader.formattype,
-                                pDemuxContext->formatBlock,
-                                &avst->codecpar->width,
-                                &avst->codecpar->height) != 0)
-        {
-            ret = AVERROR_INVALIDDATA;
-            goto Cleanup;
-        }*/
-        
-        // for now don't bother with the rest if we don't need to...
     }
-    else if (memcmp(&pDemuxContext->fileHeader.majortype, &MEDIATYPE_Audio, sizeof(GUID)) == 0)
+    else if (memcmp(&demux_ctx->file_header.majortype, &MEDIATYPE_Audio, sizeof(GUID)) == 0)
     {
-        if (memcmp(&pDemuxContext->fileHeader.formattype, &FORMAT_WaveFormatEx, sizeof(GUID)) != 0)
+        if (memcmp(&demux_ctx->file_header.formattype, &FORMAT_WaveFormatEx, sizeof(GUID)) != 0)
         {
             ret = AVERROR_INVALIDDATA;
             goto Cleanup;
         }
 
-        pWaveFormat = (WAVEFORMATEX*)pDemuxContext->formatBlock;
+        wave_format = (WAVEFORMATEX*)demux_ctx->format_block;
         avst->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
         avst->codecpar->codec_id = AV_CODEC_ID_AAC;
         avst->codecpar->codec_tag = 0;
 
-        avst->codecpar->channels = pWaveFormat->channels;
-        avst->codecpar->channel_layout = pWaveFormat->channels == 2? AV_CH_LAYOUT_STEREO : AV_CH_LAYOUT_MONO;
-        avst->codecpar->sample_rate = pWaveFormat->samplesPerSec;
-        avst->codecpar->block_align = pWaveFormat->blockAlign;
-        avst->codecpar->frame_size = pWaveFormat->bitsPerSample;
+        avst->codecpar->channels = wave_format->channels;
+        avst->codecpar->channel_layout = wave_format->channels == 2? AV_CH_LAYOUT_STEREO : AV_CH_LAYOUT_MONO;
+        avst->codecpar->sample_rate = wave_format->samplesPerSec;
+        avst->codecpar->block_align = wave_format->blockAlign;
+        avst->codecpar->frame_size = wave_format->bitsPerSample;
     }
     else
     {
@@ -186,9 +124,9 @@ Cleanup:
 
 static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
 {
-    PanrDemuxContext *pDemuxContext = ctx->priv_data;
-    int             ret = 0;
-    RawSampleHeader rawHeader;
+    PanrDemuxContext *demux_ctx = ctx->priv_data;
+    PanrSampleHeader raw_header;
+    int ret = 0;
 
     do
     {
@@ -198,49 +136,51 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
             goto Cleanup;
         }
 
-        if (avio_read(ctx->pb, (uint8_t*) &rawHeader, sizeof(rawHeader)) != sizeof(rawHeader))
+        if (avio_read(ctx->pb, (uint8_t*) &raw_header, sizeof(raw_header)) != sizeof(raw_header))
         {
             ret = AVERROR_INVALIDDATA;
             goto Cleanup;
         }
         
         // make sure the header looks good
-        if (rawHeader.marker == c_bRawSampleMarker)
+        if (raw_header.marker == raw_sample_signature)
         {
-            if (rawHeader.dataLength <= pDemuxContext->fileHeader.bufferSize)
+            if (raw_header.data_length <= demux_ctx->file_header.buffer_size)
             {
                 break;
             }
         }
 
         // otherwise seek backwards and check the next byte
-        avio_seek(ctx->pb, -sizeof(RawSampleHeader) + 1, SEEK_CUR);
+        avio_seek(ctx->pb, -sizeof(PanrSampleHeader) + 1, SEEK_CUR);
     } while (1);
 
-    /*if (av_new_packet(pkt, rawHeader.dataLength) < 0)
-    {
-        ret = AVERROR(ENOMEM);
-        goto Cleanup;
-    }*/
-    
+    // we never have dts available
     pkt->dts = AV_NOPTS_VALUE;
-    if (rawHeader.timeRelative)
+    
+    // extract only the absolute time for now
+    // as the decoder seems to be just fine with that
+    if (raw_header.time_relative)
     {
         pkt->pts = AV_NOPTS_VALUE;
-        avio_seek(ctx->pb, sizeof(int64_t), SEEK_CUR);
+        avio_seek(ctx->pb, sizeof(int32_t) * 2, SEEK_CUR);
     }
-    else if (rawHeader.timeAbsolute)
+    else if (raw_header.time_absolute)
     {
-        int64_t startTime = avio_rb64(ctx->pb);
-        int64_t endTime = avio_rb64(ctx->pb);
-        pkt->pts = startTime;
+        int64_t start_time = avio_rb64(ctx->pb);
+        
+        // read but ignore the end time - there was a bug in a
+        // panr source that consistently corrupted this
+        avio_rb64(ctx->pb);
+        
+        pkt->pts = start_time;
     }
     else
     {
         pkt->pts = AV_NOPTS_VALUE;
     }
 
-    if (av_get_packet(ctx->pb, pkt, rawHeader.dataLength) != rawHeader.dataLength)
+    if (av_get_packet(ctx->pb, pkt, raw_header.data_length) != raw_header.data_length)
     {
         ret = AVERROR_INVALIDDATA;
         av_packet_unref(pkt);
@@ -253,12 +193,12 @@ Cleanup:
 
 static int read_close(AVFormatContext *ctx)
 {
-    PanrDemuxContext* pDemuxContext = ctx->priv_data;
+    PanrDemuxContext* demux_ctx = ctx->priv_data;
     
-    if (pDemuxContext->formatBlock)
+    if (demux_ctx->format_block)
     {
-        av_free(pDemuxContext->formatBlock);
-        pDemuxContext->formatBlock = NULL;
+        av_free(demux_ctx->format_block);
+        demux_ctx->format_block = NULL;
     }
 
     return 0;

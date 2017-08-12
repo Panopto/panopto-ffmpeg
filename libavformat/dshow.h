@@ -27,6 +27,7 @@
 #ifndef AVCODEC_DSHOW_H
 #define AVCODEC_DSHOW_H
 
+// Match windows packing
 #pragma pack(push, 1)
 
 // Matched to guiddef.h from Windows
@@ -38,6 +39,7 @@ typedef struct GUID
     uint8_t  Data4[8];
 } __attribute__((ms_struct)) GUID;
 
+// Import necessary GUIDs
 const GUID MEDIATYPE_Video = { 0x73646976, 0x0000, 0x0010,{ 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 } };
 const GUID MEDIATYPE_Audio = { 0x73647561, 0x0000, 0x0010,{ 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 } };
 
@@ -52,6 +54,7 @@ const GUID FORMAT_MPEGVideo = { 0x05589f82, 0xc356, 0x11ce, { 0xbf, 0x01, 0x00, 
 const GUID FORMAT_MPEGStreams = { 0x05589f83, 0xc356, 0x11ce, { 0xbf, 0x01, 0x00, 0xaa, 0x00, 0x55, 0x59, 0x5a } };
 const GUID FORMAT_MPEG2Video = { 0xe06d80e3, 0xdb46, 0x11cf, { 0xb4, 0xd1, 0x00, 0x80, 0x05f, 0x6c, 0xbb, 0xea } };
 
+// Type redefs
 typedef struct RECT
 {
     int32_t    left;
@@ -143,16 +146,16 @@ typedef struct AMMediaType
 
 typedef struct tagAM_MPEGSTREAMTYPE
 {
-    int32_t             dwStreamId;     // Stream id of stream to process
-    int32_t             dwReserved;     // 8-byte alignment
-    AM_MEDIA_TYPE     mt;             // Type for substream - pbFormat is NULL
-    int8_t              bFormat[1];     // Format data
+    int32_t             dwStreamId; 
+    int32_t             dwReserved; 
+    AM_MEDIA_TYPE     mt; 
+    int8_t              bFormat[1];
 } __attribute__((ms_struct)) AM_MPEGSTREAMTYPE;
 
 typedef struct tagAM_MPEGSYSTEMTYPE
 {
-    int32_t             dwBitRate;      // Bits per second
-    int32_t             cStreams;       // Number of streams
+    int32_t             dwBitRate;
+    int32_t             cStreams;
     AM_MPEGSTREAMTYPE Streams[1];
 } __attribute__((ms_struct)) AM_MPEGSYSTEMTYPE;
 

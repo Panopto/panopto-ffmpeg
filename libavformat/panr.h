@@ -27,10 +27,12 @@
 #ifndef AVCODEC_PANR_H
 #define AVCODEC_PANR_H
 
+// Match windows packing
 #pragma pack(push, 1)
 
 // Resolves to 'PANR'
-static const uint32_t sc_panrSignature = 1346457170;
+// Necessary to avoid warnings/portability issues
+static const uint32_t panr_signature = 1346457170;
 
 // File header
 //
@@ -44,23 +46,23 @@ static const uint32_t sc_panrSignature = 1346457170;
 // 4 bytes - Maximum buffer size
 // 4 bytes - Size of format data section (N)
 // N bytes - Format data (AM_MEDIA_TYPE.pbFormat)
-typedef struct RawSampleFileHeader
+typedef struct PanrSampleFileHeader
 {
-    uint32_t    ffSignature;
-    int32_t     ffVersion;
-    int64_t     startTimeFirst;
-    int64_t     endTimeLast;
-    int64_t     startWallTime;
-    int64_t     endWallTime;
-    GUID        majortype;
-    GUID        subtype;
-    uint32_t    fFixedSizeSamples;
-    uint32_t    fTemporalCompressions;
-    uint32_t    lSampleSize;
-    GUID        formattype;
-    int32_t     bufferSize;
-    uint32_t    nbformat;
-} RawSampleFileHeader;
+    uint32_t    signature;
+    int32_t      version;
+    int64_t      start_time_first;
+    int64_t      end_time_last;
+    int64_t      start_wall_time;
+    int64_t      end_wall_time;
+    GUID         majortype;
+    GUID         subtype;
+    uint32_t    fixed_size_samples;
+    uint32_t    temporal_compression;
+    uint32_t    sample_size;
+    GUID         formattype;
+    int32_t      buffer_size;
+    uint32_t    cb_format;
+} __attribute__((ms_struct)) PanrSampleFileHeader;
 
 // Each sample entry
 //
@@ -78,27 +80,27 @@ typedef struct RawSampleFileHeader
 //   0 or 4 or 8 bytes - start media time
 //   0 or 4 or 8 bytes - end media time (DO NOT USE - INCONSISTENT)
 // N bytes - data body
-static const uint8_t c_bRawSampleMarker = 0x9c;
-typedef struct RawSampleHeader
+static const uint8_t raw_sample_signature = 0x9c;
+typedef struct PanrSampleHeader
 {
     uint8_t marker;
     union
     {
-        uint8_t bitFlags;
+        uint8_t bit_flags;
         struct
         {
             uint8_t discontinuity : 1;
             uint8_t preroll : 1;
-            uint8_t syncPoint : 1;
-            uint8_t timeAbsolute : 1;
-            uint8_t timeRelative : 1;
-            uint8_t mediaTimeAbsolute : 1;
-            uint8_t mediaTimeRelative : 1;
+            uint8_t syncpoint : 1;
+            uint8_t time_absolute : 1;
+            uint8_t time_relative : 1;
+            uint8_t media_time_absolute : 1;
+            uint8_t media_time_relative: 1;
             uint8_t reserved : 1;
         } __attribute__((ms_struct));
     };
-    int32_t dataLength;
-} __attribute__((ms_struct)) RawSampleHeader;
+    int32_t data_length;
+} __attribute__((ms_struct)) PanrSampleHeader;
 
 #pragma pack(pop)
 

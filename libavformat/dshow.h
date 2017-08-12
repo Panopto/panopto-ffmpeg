@@ -27,6 +27,8 @@
 #ifndef AVCODEC_DSHOW_H
 #define AVCODEC_DSHOW_H
 
+#pragma pack(push, 1)
+
 // Matched to guiddef.h from Windows
 typedef struct GUID
 {
@@ -34,7 +36,7 @@ typedef struct GUID
     uint16_t Data2;
     uint16_t Data3;
     uint8_t  Data4[8];
-} GUID;
+} __attribute__((ms_struct)) GUID;
 
 const GUID MEDIATYPE_Video = { 0x73646976, 0x0000, 0x0010,{ 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 } };
 const GUID MEDIATYPE_Audio = { 0x73647561, 0x0000, 0x0010,{ 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 } };
@@ -56,7 +58,7 @@ typedef struct RECT
     int32_t    top;
     int32_t    right;
     int32_t    bottom;
-} RECT;
+} __attribute__((ms_struct)) RECT;
 
 typedef struct WAVEFORMATEX
 {
@@ -67,7 +69,7 @@ typedef struct WAVEFORMATEX
     uint16_t    blockAlign;
     uint16_t    bitsPerSample;
     uint16_t    cbSize;
-} WAVEFORMATEX;
+} __attribute__((ms_struct)) WAVEFORMATEX;
 
 typedef struct BITMAPINFOHEADER {
     int32_t      biSize;
@@ -81,7 +83,7 @@ typedef struct BITMAPINFOHEADER {
     int32_t      biYPelsPerMeter;
     int32_t      biClrUsed;
     int32_t      biClrImportant;
-} BITMAPINFOHEADER;
+} __attribute__((ms_struct)) BITMAPINFOHEADER;
 
 typedef struct VIDEOINFOHEADER {
 
@@ -91,9 +93,9 @@ typedef struct VIDEOINFOHEADER {
     int32_t         bitErrorRate;
     int64_t         avgTimePerFrame;
     BITMAPINFOHEADER bmiHeader;
-} VIDEOINFOHEADER;
+} __attribute__((ms_struct)) VIDEOINFOHEADER;
 
-typedef struct tagVIDEOINFOHEADER2 {
+typedef struct VIDEOINFOHEADER2 {
     RECT        rcSource;
     RECT        rcTarget;
     int32_t     dwBitRate;
@@ -103,13 +105,10 @@ typedef struct tagVIDEOINFOHEADER2 {
     int32_t     dwCopyProtectFlags;
     int32_t     dwPictAspectRatioX;
     int32_t     dwPictAspectRatioY;
-    union {
-        int32_t dwControlFlags;
-        int32_t dwReserved1;
-    };
-    int32_t               dwReserved2;
+    int32_t     dwReserved1;
+    int32_t     dwReserved2;
     BITMAPINFOHEADER    bmiHeader;
-} VIDEOINFOHEADER2;
+} __attribute__((ms_struct)) VIDEOINFOHEADER2;
 
 typedef struct tagMPEG1VIDEOINFO {
 
@@ -117,7 +116,7 @@ typedef struct tagMPEG1VIDEOINFO {
     int32_t           dwStartTimeCode;
     int32_t           cbSequenceHeader;
     int8_t            bSequenceHeader[1];
-} MPEG1VIDEOINFO;
+} __attribute__((ms_struct))MPEG1VIDEOINFO;
 
 typedef struct tagMPEG2VIDEOINFO {
     VIDEOINFOHEADER2    hdr;
@@ -127,7 +126,7 @@ typedef struct tagMPEG2VIDEOINFO {
     int32_t               dwLevel;
     int32_t               dwFlags;
     int32_t               dwSequenceHeader[1];
-} MPEG2VIDEOINFO;
+} __attribute__((ms_struct)) MPEG2VIDEOINFO;
 
 typedef struct AMMediaType
 {
@@ -140,7 +139,7 @@ typedef struct AMMediaType
     void *pUnk;
     uint32_t cbFormat;
     int8_t *pbFormat;
-} AM_MEDIA_TYPE;
+} __attribute__((ms_struct)) AM_MEDIA_TYPE;
 
 typedef struct tagAM_MPEGSTREAMTYPE
 {
@@ -148,13 +147,15 @@ typedef struct tagAM_MPEGSTREAMTYPE
     int32_t             dwReserved;     // 8-byte alignment
     AM_MEDIA_TYPE     mt;             // Type for substream - pbFormat is NULL
     int8_t              bFormat[1];     // Format data
-} AM_MPEGSTREAMTYPE;
+} __attribute__((ms_struct)) AM_MPEGSTREAMTYPE;
 
 typedef struct tagAM_MPEGSYSTEMTYPE
 {
     int32_t             dwBitRate;      // Bits per second
     int32_t             cStreams;       // Number of streams
     AM_MPEGSTREAMTYPE Streams[1];
-} AM_MPEGSYSTEMTYPE;
+} __attribute__((ms_struct)) AM_MPEGSYSTEMTYPE;
+
+#pragma pack(pop)
 
 #endif /* AVCODEC_DSHOW_H */

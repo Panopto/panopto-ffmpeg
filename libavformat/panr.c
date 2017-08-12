@@ -51,27 +51,31 @@ static int read_probe(AVProbeData *p)
 static int get_width_and_height_from_format(GUID* format_type, int8_t* format_block, int* outWidth, int* outHeight)
 {
     int ret = 0;
-    if (memcmp(format_type, &FORMAT_VideoInfo, sizeof(GUID) == 0))
+    if (memcmp(format_type, &FORMAT_VideoInfo, sizeof(GUID)) == 0)
     {
         VIDEOINFOHEADER* vih = (VIDEOINFOHEADER*)format_block;
+fprintf(stderr,"vih");
         *outWidth = vih->bmiHeader.biWidth;
         *outHeight = vih->bmiHeader.biHeight;
     }
-    else if (memcmp(format_type, &FORMAT_VideoInfo2, sizeof(GUID) == 0))
+    else if (memcmp(format_type, &FORMAT_VideoInfo2, sizeof(GUID)) == 0)
     {
         VIDEOINFOHEADER2* vih = (VIDEOINFOHEADER2*)format_block;
+fprintf(stderr,"vih2");
         *outWidth = vih->bmiHeader.biWidth;
         *outHeight = vih->bmiHeader.biHeight;
     }
-    else if (memcmp(format_type, &FORMAT_MPEGVideo, sizeof(GUID) == 0))
+    else if (memcmp(format_type, &FORMAT_MPEGVideo, sizeof(GUID)) == 0)
     {
         MPEG1VIDEOINFO* vih = (MPEG1VIDEOINFO*)format_block;
+fprintf(stderr,"mpeg1");
         *outWidth = vih->hdr.bmiHeader.biWidth;
         *outHeight = vih->hdr.bmiHeader.biHeight;
     }
-    else if (memcmp(format_type, &FORMAT_MPEGStreams, sizeof(GUID) == 0))
+    else if (memcmp(format_type, &FORMAT_MPEGStreams, sizeof(GUID)) == 0)
     {
         AM_MPEGSYSTEMTYPE* vih = (AM_MPEGSYSTEMTYPE*)format_block;
+	fprintf(stderr, "weirdcase");
         if (vih->cStreams < 1)
         {
             ret = AVERROR_INVALIDDATA;
@@ -84,14 +88,17 @@ static int get_width_and_height_from_format(GUID* format_type, int8_t* format_bl
             outWidth,
             outHeight);
     }
-    else if (memcmp(format_type, &FORMAT_MPEG2Video, sizeof(GUID) == 0))
+    else if (memcmp(format_type, &FORMAT_MPEG2Video, sizeof(GUID)) == 0)
     {
         MPEG2VIDEOINFO* vih = (MPEG2VIDEOINFO*)format_block;
+fprintf(stderr,"mpeg2: Profile: %d Level: %d, bitrate: %d, arX: %d ", 
+vih->dwProfile, vih->dwLevel, vih->hdr.dwBitRate, vih->hdr.dwPictAspectRatioX );
         *outWidth = vih->hdr.bmiHeader.biWidth;
         *outHeight = vih->hdr.bmiHeader.biHeight;
     }
     else
     {
+	fprintf(stderr, "nomatch");
         ret = AVERROR_INVALIDDATA;
         goto Cleanup;
     }
@@ -135,8 +142,11 @@ static int read_header(AVFormatContext * pFormatContext)
         ret = AVERROR(ENOMEM);
         goto Cleanup;
     }
-    
-    if (memcmp(&pDemuxContext->fileHeader.majortype, &MEDIATYPE_Video, sizeof(GUID) == 0))
+
+    avst->nb_frames = 0;
+    avst->need_parsing = AVSTREAM_PARSE_FULL_RAW;
+
+    if (memcmp(&pDemuxContext->fileHeader.majortype, &MEDIATYPE_Video, sizeof(GUID)) == 0)
     {
         avst->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
         avst->codecpar->codec_id = AV_CODEC_ID_H264;
@@ -149,12 +159,14 @@ static int read_header(AVFormatContext * pFormatContext)
             ret = AVERROR_INVALIDDATA;
             goto Cleanup;
         }
+
+	fprintf(stderr, "Read size as (%d,%d)", avst->codecpar->width, avst->codecpar->height);
         
         // for now don't bother with the rest if we don't need to...
     }
-    else if (memcmp(&pDemuxContext->fileHeader.majortype, &MEDIATYPE_Audio, sizeof(GUID) == 0))
+    else if (memcmp(&pDemuxContext->fileHeader.majortype, &MEDIATYPE_Audio, sizeof(GUID)) == 0)
     {
-        if (memcmp(&pDemuxContext->fileHeader.formattype, &FORMAT_WaveFormatEx, sizeof(GUID) != 0))
+        if (memcmp(&pDemuxContext->fileHeader.formattype, &FORMAT_WaveFormatEx, sizeof(GUID)) != 0)
         {
             ret = AVERROR_INVALIDDATA;
             goto Cleanup;
@@ -195,7 +207,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
             goto Cleanup;
         }
 
-        if (avio_read(ctx->pb, &rawHeader, sizeof(rawHeader)) != sizeof(RawSampleHeader))
+        if (avio_read(ctx->pb, &rawHeader, sizeof(rawHeader)) != sizeof(rawHeader))
         {
             ret = AVERROR_INVALIDDATA;
             goto Cleanup;
@@ -214,9 +226,17 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
         avio_seek(ctx->pb, -sizeof(RawSampleHeader) + 1, SEEK_CUR);
     } while (1);
 
+fprintf(stderr, "packetsize=%d, offset=%d", rawHeader.dataLength, offsetof(RawSampleHeader, dataLength));
+    if (av_new_packet(pkt, rawHeader.dataLength) < 0)
+    {
+        ret = AVERROR(ENOMEM);
+        goto Cleanup;
+    }
+
     if (av_get_packet(ctx->pb, pkt, rawHeader.dataLength) != rawHeader.dataLength)
     {
         ret = AVERROR_INVALIDDATA;
+        av_packet_unref(pkt);
         goto Cleanup;
     }
 

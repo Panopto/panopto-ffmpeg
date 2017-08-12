@@ -27,6 +27,8 @@
 #ifndef AVCODEC_PANR_H
 #define AVCODEC_PANR_H
 
+#pragma pack(push, 1)
+
 // Resolves to 'PANR'
 static const uint32_t sc_panrSignature = 1346457170;
 
@@ -93,9 +95,11 @@ typedef struct RawSampleHeader
             uint8_t mediaTimeAbsolute : 1;
             uint8_t mediaTimeRelative : 1;
             uint8_t reserved : 1;
-        };
+        } __attribute__((ms_struct));
     };
     int32_t dataLength;
-} RawSampleHeader;
+} __attribute__((ms_struct)) RawSampleHeader;
+
+#pragma pack(pop)
 
 #endif /* AVCODEC_PANR_H */

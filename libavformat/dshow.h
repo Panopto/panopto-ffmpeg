@@ -30,6 +30,8 @@
 // Match windows packing
 #pragma pack(push, 1)
 
+#ifndef WIN32
+
 // Matched to guiddef.h from Windows
 typedef struct GUID
 {
@@ -38,6 +40,42 @@ typedef struct GUID
     uint16_t Data3;
     uint8_t  Data4[8];
 } __attribute__((ms_struct)) GUID;
+
+// Type redefs
+typedef struct RECT
+{
+    int32_t    left;
+    int32_t    top;
+    int32_t    right;
+    int32_t    bottom;
+} __attribute__((ms_struct)) RECT;
+
+typedef struct BITMAPINFOHEADER {
+    int32_t      biSize;
+    int32_t      biWidth;
+    int32_t      biHeight;
+    int16_t      biPlanes;
+    int16_t      biBitCount;
+    int32_t      biCompression;
+    int32_t      biSizeImage;
+    int32_t      biXPelsPerMeter;
+    int32_t      biYPelsPerMeter;
+    int32_t      biClrUsed;
+    int32_t      biClrImportant;
+} __attribute__((ms_struct)) BITMAPINFOHEADER;
+
+typedef struct WAVEFORMATEX
+{
+    uint16_t    wFormatTag;
+    uint16_t    nChannels;
+    uint32_t    nSamplesPerSec;
+    uint32_t    nAvgBytesPerSec;
+    uint16_t    nBlockAlign;
+    uint16_t    wBitsPerSample;
+    uint16_t    cbSize;
+} __attribute__((ms_struct)) WAVEFORMATEX;
+
+#endif /* WIN32 */
 
 // Import necessary GUIDs
 const GUID MEDIATYPE_Video = { 0x73646976, 0x0000, 0x0010,{ 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 } };
@@ -53,40 +91,6 @@ const GUID FORMAT_VideoInfo2 = { 0xf72a76A0, 0xeb0a, 0x11d0, { 0xac, 0xe4, 0x00,
 const GUID FORMAT_MPEGVideo = { 0x05589f82, 0xc356, 0x11ce, { 0xbf, 0x01, 0x00, 0xaa, 0x00, 0x55, 0x59, 0x5a } };
 const GUID FORMAT_MPEGStreams = { 0x05589f83, 0xc356, 0x11ce, { 0xbf, 0x01, 0x00, 0xaa, 0x00, 0x55, 0x59, 0x5a } };
 const GUID FORMAT_MPEG2Video = { 0xe06d80e3, 0xdb46, 0x11cf, { 0xb4, 0xd1, 0x00, 0x80, 0x05f, 0x6c, 0xbb, 0xea } };
-
-// Type redefs
-typedef struct RECT
-{
-    int32_t    left;
-    int32_t    top;
-    int32_t    right;
-    int32_t    bottom;
-} __attribute__((ms_struct)) RECT;
-
-typedef struct WAVEFORMATEX
-{
-    uint16_t    formatTag;
-    uint16_t    channels;
-    uint32_t    samplesPerSec;
-    uint32_t    avgBytesPerSec;
-    uint16_t    blockAlign;
-    uint16_t    bitsPerSample;
-    uint16_t    cbSize;
-} __attribute__((ms_struct)) WAVEFORMATEX;
-
-typedef struct BITMAPINFOHEADER {
-    int32_t      biSize;
-    int32_t      biWidth;
-    int32_t      biHeight;
-    int16_t      biPlanes;
-    int16_t      biBitCount;
-    int32_t      biCompression;
-    int32_t      biSizeImage;
-    int32_t      biXPelsPerMeter;
-    int32_t      biYPelsPerMeter;
-    int32_t      biClrUsed;
-    int32_t      biClrImportant;
-} __attribute__((ms_struct)) BITMAPINFOHEADER;
 
 typedef struct VIDEOINFOHEADER {
 

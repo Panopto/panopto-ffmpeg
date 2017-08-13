@@ -88,14 +88,14 @@ static int read_header(AVFormatContext * format_ctx)
     avst->nb_frames = 0;
     avst->need_parsing = AVSTREAM_PARSE_FULL;
 
-    if (memcmp(&demux_ctx->file_header.majortype, &MEDIATYPE_Video, sizeof(GUID)) == 0)
+    if (memcmp(&demux_ctx->file_header.majortype, &PANR_MEDIATYPE_Video, sizeof(GUID)) == 0)
     {
         avst->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
         avst->codecpar->codec_id = AV_CODEC_ID_H264;
     }
-    else if (memcmp(&demux_ctx->file_header.majortype, &MEDIATYPE_Audio, sizeof(GUID)) == 0)
+    else if (memcmp(&demux_ctx->file_header.majortype, &PANR_MEDIATYPE_Audio, sizeof(GUID)) == 0)
     {
-        if (memcmp(&demux_ctx->file_header.formattype, &FORMAT_WaveFormatEx, sizeof(GUID)) != 0)
+        if (memcmp(&demux_ctx->file_header.formattype, &PANR_FORMAT_WaveFormatEx, sizeof(GUID)) != 0)
         {
             ret = AVERROR_INVALIDDATA;
             goto Cleanup;

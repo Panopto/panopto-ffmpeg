@@ -46,6 +46,62 @@ static int read_probe(AVProbeData *probe_data)
     return 0;
 }
 
+static int extract_video_format_block_info(GUID* format_type, int8_t* format_block, AVStream* avst)
+{
+    int ret = 0;
+    
+    // numerator should always be 1 second in 100 ns ticks to match dshow behavior
+    avst->avg_frame_rate.num = 10000000;
+    if (memcmp(format_type, &PANR_FORMAT_VideoInfo, sizeof(GUID)) == 0)
+    {
+        PANR_VIDEOINFOHEADER* vih = (PANR_VIDEOINFOHEADER*)format_block;
+        avst->avg_frame_rate.den = vih->avgTimePerFrame;
+        avst->codecpar->bit_rate = vih->bitRate;
+    }
+    else if (memcmp(format_type, &PANR_FORMAT_VideoInfo2, sizeof(GUID)) == 0)
+    {
+        PANR_VIDEOINFOHEADER2* vih = (PANR_VIDEOINFOHEADER2*)format_block;
+        avst->avg_frame_rate.den = vih->avgTimePerFrame;
+        avst->codecpar->bit_rate = vih->dwBitRate;
+    }
+    else if (memcmp(format_type, &PANR_FORMAT_MPEGVideo, sizeof(GUID)) == 0)
+    {
+        PANR_MPEG1VIDEOINFO* vih = (PANR_MPEG1VIDEOINFO*)format_block;
+        avst->avg_frame_rate.den = vih->hdr.avgTimePerFrame;
+        avst->codecpar->bit_rate = vih->hdr.bitRate;
+    }
+    else if (memcmp(format_type, &PANR_FORMAT_MPEGStreams, sizeof(GUID)) == 0)
+    {
+        PANR_AM_MPEGSYSTEMTYPE* vih = (PANR_AM_MPEGSYSTEMTYPE*)format_block;
+        if (vih->cStreams < 1)
+        {
+            ret = AVERROR_INVALIDDATA;
+            goto Cleanup;
+        }
+    
+        avst->codecpar->bit_rate = vih->dwBitRate;
+        ret = extract_video_format_block_info(
+            &vih->Streams[0].mt.formattype,
+            vih->Streams[0].bFormat,
+            avst);
+    }
+    else if (memcmp(format_type, &PANR_FORMAT_MPEG2Video, sizeof(GUID)) == 0)
+    {
+        PANR_MPEG2VIDEOINFO* vih = (PANR_MPEG2VIDEOINFO*)format_block;
+        avst->codecpar->bit_rate = vih->hdr.dwBitRate;
+        avst->avg_frame_rate.den = vih->hdr.avgTimePerFrame;
+    }
+    else
+    {
+        ret = AVERROR_INVALIDDATA;
+        goto Cleanup;
+    }
+
+Cleanup:
+    return ret;
+}
+
+
 static int read_header(AVFormatContext * format_ctx)
 {
     PanrDemuxContext *demux_ctx = format_ctx->priv_data;
@@ -86,12 +142,30 @@ static int read_header(AVFormatContext * format_ctx)
     // do all the hard work about detection. We'll
     // just manage proper unpacking
     avst->nb_frames = 0;
-    avst->need_parsing = AVSTREAM_PARSE_FULL;
+    avst->need_parsing = AVSTREAM_PARSE_FULL_RAW;
 
     if (memcmp(&demux_ctx->file_header.majortype, &PANR_MEDIATYPE_Video, sizeof(GUID)) == 0)
     {
         avst->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
         avst->codecpar->codec_id = AV_CODEC_ID_H264;
+        
+        ret = extract_video_format_block_info(
+                        &demux_ctx->file_header.formattype, 
+                        demux_ctx->format_block, 
+                        avst);
+                        
+        if (ret != 0)
+        {
+            goto Cleanup;
+        }
+        
+        // for some reason sometimes this is in kilobits
+        // and other times in bits...just apply a heuristic
+        // to try to get it right
+        if (avst->codecpar->bit_rate < 20000)
+        {
+                avst->codecpar->bit_rate *= 1000;
+        }
     }
     else if (memcmp(&demux_ctx->file_header.majortype, &PANR_MEDIATYPE_Audio, sizeof(GUID)) == 0)
     {
@@ -126,7 +200,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
 {
     PanrDemuxContext *demux_ctx = ctx->priv_data;
     PanrSampleHeader raw_header;
-    int ret = 0;
+    int ret = 0, buffer_read_size;
 
     do
     {
@@ -136,7 +210,8 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
             goto Cleanup;
         }
 
-        if (avio_read(ctx->pb, (uint8_t*) &raw_header, sizeof(raw_header)) != sizeof(raw_header))
+        buffer_read_size = avio_read(ctx->pb, (uint8_t*) &raw_header, sizeof(raw_header));
+        if ( buffer_read_size < sizeof(raw_header))
         {
             ret = AVERROR_INVALIDDATA;
             goto Cleanup;
@@ -158,8 +233,10 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
     // we never have dts available
     pkt->dts = AV_NOPTS_VALUE;
     
-    // extract only the absolute time for now
-    // as the decoder seems to be just fine with that
+    // for now we fully rely on the downstream components
+    // to extract the pts from the actual samples. This block
+    // is left here in case we need to change to actually properly
+    // handle them as per the panr* format
     if (raw_header.time_relative)
     {
         pkt->pts = AV_NOPTS_VALUE;
@@ -167,13 +244,17 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
     }
     else if (raw_header.time_absolute)
     {
-        int64_t start_time = avio_rb64(ctx->pb);
+        // read start time - for now we rely on the 
+        // decoder to handle actually extracting the
+        // proper pts from the samples rather than
+        // relying on the dshow times
+        avio_rb64(ctx->pb);
         
-        // read but ignore the end time - there was a bug in a
+        // read AND ALWAYS ignore the end time - there was a bug in a
         // panr source that consistently corrupted this
         avio_rb64(ctx->pb);
         
-        pkt->pts = start_time;
+        pkt->pts = AV_NOPTS_VALUE;
     }
     else
     {

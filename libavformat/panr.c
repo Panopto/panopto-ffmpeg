@@ -24,10 +24,27 @@
 #include "dshow.h"
 #include "panr.h"
 
+#define SAMPLE_INDEX_BUFFER_SIZE (512)
+
+typedef struct SampleTimeEntry
+{
+    uint64_t file_pos;
+    int64_t pts;
+} SampleTimeEntry;
+
+typedef struct PanrSampleIndex
+{
+    SampleTimeEntry samples[SAMPLE_INDEX_BUFFER_SIZE];
+    int32_t next_open_idx;
+    struct PanrSampleIndex* next;
+} PanrSampleIndex;
+
 typedef struct PanrDemuxContext
 {
     PanrSampleFileHeader file_header;
     uint8_t* format_block;
+    PanrSampleIndex* sample_index;
+    int64_t last_sample_pos;
 } PanrDemuxContext;
 
 static int read_probe(AVProbeData *probe_data)
@@ -51,23 +68,23 @@ static int extract_video_format_block_info(GUID* format_type, int8_t* format_blo
     int ret = 0;
     
     // numerator should always be 1 second in 100 ns ticks to match dshow behavior
-    avst->avg_frame_rate.num = 10000000;
+    avst->avg_frame_rate.num = 1000;
     if (memcmp(format_type, &PANR_FORMAT_VideoInfo, sizeof(GUID)) == 0)
     {
         PANR_VIDEOINFOHEADER* vih = (PANR_VIDEOINFOHEADER*)format_block;
-        avst->avg_frame_rate.den = vih->avgTimePerFrame;
+        avst->avg_frame_rate.den = vih->avgTimePerFrame / 10000;
         avst->codecpar->bit_rate = vih->bitRate;
     }
     else if (memcmp(format_type, &PANR_FORMAT_VideoInfo2, sizeof(GUID)) == 0)
     {
         PANR_VIDEOINFOHEADER2* vih = (PANR_VIDEOINFOHEADER2*)format_block;
-        avst->avg_frame_rate.den = vih->avgTimePerFrame;
+        avst->avg_frame_rate.den = vih->avgTimePerFrame / 10000;
         avst->codecpar->bit_rate = vih->dwBitRate;
     }
     else if (memcmp(format_type, &PANR_FORMAT_MPEGVideo, sizeof(GUID)) == 0)
     {
         PANR_MPEG1VIDEOINFO* vih = (PANR_MPEG1VIDEOINFO*)format_block;
-        avst->avg_frame_rate.den = vih->hdr.avgTimePerFrame;
+        avst->avg_frame_rate.den = vih->hdr.avgTimePerFrame / 10000;
         avst->codecpar->bit_rate = vih->hdr.bitRate;
     }
     else if (memcmp(format_type, &PANR_FORMAT_MPEGStreams, sizeof(GUID)) == 0)
@@ -89,7 +106,7 @@ static int extract_video_format_block_info(GUID* format_type, int8_t* format_blo
     {
         PANR_MPEG2VIDEOINFO* vih = (PANR_MPEG2VIDEOINFO*)format_block;
         avst->codecpar->bit_rate = vih->hdr.dwBitRate;
-        avst->avg_frame_rate.den = vih->hdr.avgTimePerFrame;
+        avst->avg_frame_rate.den = vih->hdr.avgTimePerFrame / 10000;
     }
     else
     {
@@ -101,7 +118,6 @@ Cleanup:
     return ret;
 }
 
-
 static int read_header(AVFormatContext * format_ctx)
 {
     PanrDemuxContext *demux_ctx = format_ctx->priv_data;
@@ -110,6 +126,11 @@ static int read_header(AVFormatContext * format_ctx)
     AVStream        *avst = NULL;
     int ret = 0;
 
+    // ensure we're in a known good state
+    // read_header is the init function for our demux context
+    demux_ctx->sample_index = NULL;
+    demux_ctx->format_block = NULL;
+    
     if (avio_read(pBuffer, (uint8_t*) &demux_ctx->file_header, sizeof(PanrSampleFileHeader))
             != sizeof(PanrSampleFileHeader))
     {
@@ -190,7 +211,16 @@ static int read_header(AVFormatContext * format_ctx)
     {
         ret = AVERROR_INVALIDDATA;
         goto Cleanup;
-    }    
+    }
+    
+    demux_ctx->sample_index = (PanrSampleIndex*) av_malloc(sizeof(PanrSampleIndex));
+    if (!demux_ctx->sample_index)
+    {
+        ret = AVERROR(ENOMEM);
+        goto Cleanup;
+    }
+    demux_ctx->sample_index->next = NULL;
+    demux_ctx->sample_index->next_open_idx = 0;
 
 Cleanup:
     return ret;
@@ -201,6 +231,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
     PanrDemuxContext *demux_ctx = ctx->priv_data;
     PanrSampleHeader raw_header;
     int ret = 0, buffer_read_size;
+    int64_t marker_pos;
 
     do
     {
@@ -210,6 +241,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
             goto Cleanup;
         }
 
+        marker_pos = avio_tell(ctx->pb);
         buffer_read_size = avio_read(ctx->pb, (uint8_t*) &raw_header, sizeof(raw_header));
         if ( buffer_read_size < sizeof(raw_header))
         {
@@ -222,6 +254,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
         {
             if (raw_header.data_length <= demux_ctx->file_header.buffer_size)
             {
+                
                 break;
             }
         }
@@ -239,22 +272,74 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
     // handle them as per the panr* format
     if (raw_header.time_relative)
     {
-        pkt->pts = AV_NOPTS_VALUE;
-        avio_seek(ctx->pb, sizeof(int32_t) * 2, SEEK_CUR);
+        PanrSampleIndex* cur_idx = demux_ctx->sample_index;
+        int start_delta = avio_rb32(ctx->pb);
+        int64_t last_pts = 0;
+        
+        // find the last timestamp before this one
+        while (cur_idx)
+        {
+            // if we have nothing in this packet use the last cached or
+            // if the first sample is too far
+            // for simplicity if we find a match we
+            // consider it too far and keep moving
+            if (cur_idx->next_open_idx == 0 ||
+                 cur_idx->samples[0].file_pos >= marker_pos)
+            {
+                break;
+            }
+            
+            // if we're outside the scope of what's in this buffer
+            if (cur_idx->samples[cur_idx->next_open_idx - 1].file_pos < marker_pos)
+            {
+                // no matter what we'll want to cache the last pts - either
+                // its the target or we need it in case the next block is empty
+                last_pts = cur_idx->samples[cur_idx->next_open_idx - 1].pts;
+                
+                // if the buffer was already full cache the last pts and move
+                // on to the next buffer
+                if (cur_idx->next_open_idx >= SAMPLE_INDEX_BUFFER_SIZE)
+                {
+                    cur_idx = cur_idx->next;
+                    continue;
+                }
+                else
+                {
+                    // found the best match - last one in here
+                    break;
+                }
+            }
+            
+            // alright we know the answer is in this buffer somewhere...track it down!
+            // always start from the back since in general we expect constant forward seeks
+            // we can get away with open_idx - 2 here because the fall apart case is when
+            // open_idx = 1, which means there's only one sample, and we'll have cached
+            // the right value already above
+            for (int i = cur_idx->next_open_idx - 2; i >= 0; i--)
+            {
+                last_pts = cur_idx->samples[i].pts;
+                if (cur_idx->samples[i].file_pos < marker_pos)
+                {
+                    break;
+                }
+            }
+            
+            break;
+        }
+        
+        pkt->pts = last_pts + start_delta;
+        
+        // read AND ALWAYS ignore the end time - there was a bug in a
+        // panr source that consistently corrupted this
+        avio_rb32(ctx->pb);
     }
     else if (raw_header.time_absolute)
     {
-        // read start time - for now we rely on the 
-        // decoder to handle actually extracting the
-        // proper pts from the samples rather than
-        // relying on the dshow times
-        avio_rb64(ctx->pb);
+        pkt->pts  = avio_rb64(ctx->pb);
         
         // read AND ALWAYS ignore the end time - there was a bug in a
         // panr source that consistently corrupted this
         avio_rb64(ctx->pb);
-        
-        pkt->pts = AV_NOPTS_VALUE;
     }
     else
     {
@@ -266,6 +351,52 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
         ret = AVERROR_INVALIDDATA;
         av_packet_unref(pkt);
         goto Cleanup;
+    }
+    
+    if (raw_header.syncpoint)
+    {
+        pkt->flags |= AV_PKT_FLAG_KEY;
+    }
+    
+    // record the pts for this sample position if it's a new max
+    // there's no way to seek forward besides this so we're guaranteed
+    // to be able to make some clever decisions here
+    if (marker_pos > demux_ctx->last_sample_pos)
+    {
+        PanrSampleIndex* cur_idx = demux_ctx->sample_index;
+        while (cur_idx->next)
+        {
+            cur_idx = cur_idx->next;
+        }
+        
+        if (cur_idx->next_open_idx >= SAMPLE_INDEX_BUFFER_SIZE)
+        {
+            cur_idx->next = (PanrSampleIndex*) av_malloc(sizeof(PanrSampleIndex));
+            if (!cur_idx->next )
+            {
+                ret = AVERROR(ENOMEM);
+                goto Cleanup;
+            }
+            cur_idx = cur_idx->next;
+            cur_idx->next = NULL;
+            cur_idx->next_open_idx = 0;
+        }
+        
+        cur_idx->samples[cur_idx->next_open_idx].file_pos = marker_pos;
+        cur_idx->samples[cur_idx->next_open_idx].pts = pkt->pts;
+        cur_idx->next_open_idx++;
+        
+        demux_ctx->last_sample_pos = marker_pos;
+    }
+    
+    if (pkt->pts != AV_NOPTS_VALUE)
+    {
+        av_add_index_entry(ctx->streams[0],
+                            marker_pos, 
+                            pkt->pts,
+                            avio_tell(ctx->pb) - marker_pos,
+                            0,  // distance 
+                            raw_header.syncpoint? AVINDEX_KEYFRAME : 0);
     }
 
 Cleanup:
@@ -292,5 +423,6 @@ AVInputFormat ff_panr_demuxer = {
     .read_probe = read_probe,
     .read_header = read_header,
     .read_packet = read_packet,
-    .read_close = read_close
+    .read_close = read_close,
+    .flags =AVFMT_GENERIC_INDEX | AVFMT_VARIABLE_FPS
 };

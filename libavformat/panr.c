@@ -158,12 +158,15 @@ static int read_header(AVFormatContext * format_ctx)
         ret = AVERROR(ENOMEM);
         goto Cleanup;
     }
+    
+    // set the pts info to match dshow timestamps
+    avpriv_set_pts_info(avst, 64, 1, 10000000);
 
     // use parse_full here - make the decoder 
     // do all the hard work about detection. We'll
     // just manage proper unpacking
     avst->nb_frames = 0;
-    avst->need_parsing = AVSTREAM_PARSE_FULL_RAW;
+    avst->need_parsing = AVSTREAM_PARSE_NONE;
 
     if (memcmp(&demux_ctx->file_header.majortype, &PANR_MEDIATYPE_Video, sizeof(GUID)) == 0)
     {
@@ -232,6 +235,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
     PanrSampleHeader raw_header;
     int ret = 0, buffer_read_size;
     int64_t marker_pos;
+    int64_t pkt_pts;
 
     do
     {
@@ -254,7 +258,6 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
         {
             if (raw_header.data_length <= demux_ctx->file_header.buffer_size)
             {
-                
                 break;
             }
         }
@@ -262,9 +265,6 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
         // otherwise seek backwards and check the next byte
         avio_seek(ctx->pb, -sizeof(PanrSampleHeader) + 1, SEEK_CUR);
     } while (1);
-
-    // we never have dts available
-    pkt->dts = AV_NOPTS_VALUE;
     
     // for now we fully rely on the downstream components
     // to extract the pts from the actual samples. This block
@@ -273,7 +273,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
     if (raw_header.time_relative)
     {
         PanrSampleIndex* cur_idx = demux_ctx->sample_index;
-        int start_delta = avio_rb32(ctx->pb);
+        int start_delta = avio_rl32(ctx->pb);
         int64_t last_pts = 0;
         
         // find the last timestamp before this one
@@ -327,23 +327,33 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
             break;
         }
         
-        pkt->pts = last_pts + start_delta;
+        pkt_pts = last_pts + start_delta;
         
         // read AND ALWAYS ignore the end time - there was a bug in a
         // panr source that consistently corrupted this
-        avio_rb32(ctx->pb);
+        avio_rl32(ctx->pb);
     }
     else if (raw_header.time_absolute)
     {
-        pkt->pts  = avio_rb64(ctx->pb);
+        pkt_pts  = avio_rl64(ctx->pb);
         
         // read AND ALWAYS ignore the end time - there was a bug in a
         // panr source that consistently corrupted this
-        avio_rb64(ctx->pb);
+        avio_rl64(ctx->pb);
     }
     else
     {
-        pkt->pts = AV_NOPTS_VALUE;
+        pkt_pts = AV_NOPTS_VALUE;
+    }
+    
+    if (raw_header.media_time_absolute)
+    {
+        avio_rl64(ctx->pb);
+        avio_rl64(ctx->pb);
+    }
+    else if (raw_header.media_time_relative)
+    {
+        avio_rl64(ctx->pb);
     }
 
     if (av_get_packet(ctx->pb, pkt, raw_header.data_length) != raw_header.data_length)
@@ -352,6 +362,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
         av_packet_unref(pkt);
         goto Cleanup;
     }
+    pkt->pts = pkt_pts;
     
     if (raw_header.syncpoint)
     {
@@ -424,5 +435,5 @@ AVInputFormat ff_panr_demuxer = {
     .read_header = read_header,
     .read_packet = read_packet,
     .read_close = read_close,
-    .flags =AVFMT_GENERIC_INDEX | AVFMT_VARIABLE_FPS
+    .flags =AVFMT_GENERIC_INDEX | AVFMT_TS_DISCONT
 };

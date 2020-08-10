@@ -204,6 +204,7 @@ static int read_header(AVFormatContext * format_ctx)
         avst->codecpar->codec_id = AV_CODEC_ID_AAC;
         avst->codecpar->codec_tag = 0;
 
+        avst->codecpar->profile = FF_PROFILE_AAC_LOW;
         avst->codecpar->channels = wave_format->nChannels;
         avst->codecpar->channel_layout = wave_format->nChannels == 2? AV_CH_LAYOUT_STEREO : AV_CH_LAYOUT_MONO;
         avst->codecpar->sample_rate = wave_format->nSamplesPerSec;

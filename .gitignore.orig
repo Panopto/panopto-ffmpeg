@@ -36,3 +36,8 @@
 /lcov/
 /src
 /mapfile
+<<<<<<< HEAD
+/tools/python/__pycache__/
+=======
+.vs/*
+>>>>>>> 4f4fcc87ee... Add a Panr demxuer to ffmpeg (#1)

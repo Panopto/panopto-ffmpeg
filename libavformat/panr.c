@@ -210,6 +210,8 @@ static int read_header(AVFormatContext * format_ctx)
         avst->codecpar->sample_rate = wave_format->nSamplesPerSec;
         avst->codecpar->block_align = wave_format->nBlockAlign;
         avst->codecpar->frame_size = wave_format->wBitsPerSample;
+
+        avst->need_parsing = AVSTREAM_PARSE_FULL;
     }
     else
     {

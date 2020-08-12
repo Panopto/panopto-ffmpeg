@@ -188,7 +188,7 @@ static int read_header(AVFormatContext * format_ctx)
         // to try to get it right
         if (avst->codecpar->bit_rate < 20000)
         {
-                avst->codecpar->bit_rate *= 1000;
+            avst->codecpar->bit_rate *= 1000;
         }
     }
     else if (memcmp(&demux_ctx->file_header.majortype, &PANR_MEDIATYPE_Audio, sizeof(GUID)) == 0)
@@ -202,13 +202,25 @@ static int read_header(AVFormatContext * format_ctx)
         wave_format = (WAVEFORMATEX*)demux_ctx->format_block;
         avst->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
         avst->codecpar->codec_id = AV_CODEC_ID_AAC;
-        avst->codecpar->codec_tag = 0;
+        avst->codecpar->codec_tag = MKTAG('m', 'p', '4', 'a');
 
+        avst->codecpar->profile = FF_PROFILE_AAC_LOW;
         avst->codecpar->channels = wave_format->nChannels;
         avst->codecpar->channel_layout = wave_format->nChannels == 2? AV_CH_LAYOUT_STEREO : AV_CH_LAYOUT_MONO;
         avst->codecpar->sample_rate = wave_format->nSamplesPerSec;
         avst->codecpar->block_align = wave_format->nBlockAlign;
         avst->codecpar->frame_size = wave_format->wBitsPerSample;
+
+        avst->codec->codec_type = AVMEDIA_TYPE_AUDIO;
+        avst->codec->codec_id = AV_CODEC_ID_AAC;
+        avst->codec->codec_tag = MKTAG('m', 'p', '4', 'a');
+
+        avst->codec->profile = FF_PROFILE_AAC_LOW;
+        avst->codec->channels = wave_format->nChannels;
+        avst->codec->channel_layout = wave_format->nChannels == 2? AV_CH_LAYOUT_STEREO : AV_CH_LAYOUT_MONO;
+        avst->codec->sample_rate = wave_format->nSamplesPerSec;
+        avst->codec->block_align = wave_format->nBlockAlign;
+        avst->codec->frame_size = wave_format->wBitsPerSample;
     }
     else
     {

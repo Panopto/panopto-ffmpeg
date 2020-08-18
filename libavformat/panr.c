@@ -18,11 +18,14 @@
 * License along with FFmpeg; if not, write to the Free Software
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 */
-#include "libavutil/channel_layout.h"
 #include "avformat.h"
+#include "libavcodec/put_bits.h"
+#include "libavutil/channel_layout.h"
+#include "libavcodec/mpeg4audio.h"
 #include "internal.h"
 #include "dshow.h"
 #include "panr.h"
+
 
 #define SAMPLE_INDEX_BUFFER_SIZE (512)
 
@@ -41,13 +44,19 @@ typedef struct PanrSampleIndex
 
 typedef struct PanrDemuxContext
 {
+    uint8_t first_sample;
     PanrSampleFileHeader file_header;
     uint8_t* format_block;
     PanrSampleIndex* sample_index;
     int64_t last_sample_pos;
+
+    // audio specific data
+    uint32_t audio_object_type;
+    uint32_t audio_sampling_index;
+    uint32_t audio_channel_config;
 } PanrDemuxContext;
 
-static int read_probe(AVProbeData *probe_data)
+static int read_probe(const AVProbeData *probe_data)
 {
     if (probe_data->buf_size >= sizeof(PanrSampleFileHeader) &&
             ((uint32_t*)probe_data->buf)[0] == panr_signature)
@@ -130,11 +139,13 @@ static int read_header(AVFormatContext * format_ctx)
     // read_header is the init function for our demux context
     demux_ctx->sample_index = NULL;
     demux_ctx->format_block = NULL;
+    demux_ctx->first_sample = 1;
     
     if (avio_read(pBuffer, (uint8_t*) &demux_ctx->file_header, sizeof(PanrSampleFileHeader))
             != sizeof(PanrSampleFileHeader))
     {
         ret = AVERROR_INVALIDDATA;
+        av_log(format_ctx, AV_LOG_ERROR, "Failed to read the PanrSampleFileHeader due to insufficient data\n");
         goto Cleanup;
     }
 
@@ -142,6 +153,7 @@ static int read_header(AVFormatContext * format_ctx)
     if (!demux_ctx->format_block)
     {
         ret = AVERROR(ENOMEM);
+        av_log(format_ctx, AV_LOG_ERROR, "Failed allocate the header format block memory\n");
         goto Cleanup;
     }
     
@@ -149,6 +161,7 @@ static int read_header(AVFormatContext * format_ctx)
             != demux_ctx->file_header.cb_format)
     {
         ret = AVERROR_INVALIDDATA;
+        av_log(format_ctx, AV_LOG_ERROR, "Failed to read  header format block memory from the file due to insufficent data\n");
         goto Cleanup;
     }
     
@@ -156,6 +169,7 @@ static int read_header(AVFormatContext * format_ctx)
     if (!avst)
     {
         ret = AVERROR(ENOMEM);
+        av_log(format_ctx, AV_LOG_ERROR, "Failed to allocate a new stream\n");
         goto Cleanup;
     }
     
@@ -180,6 +194,7 @@ static int read_header(AVFormatContext * format_ctx)
                         
         if (ret != 0)
         {
+            av_log(format_ctx, AV_LOG_DEBUG, "extract_video_format_block_info returned a non-zero error code %d\n", ret);
             goto Cleanup;
         }
         
@@ -188,6 +203,7 @@ static int read_header(AVFormatContext * format_ctx)
         // to try to get it right
         if (avst->codecpar->bit_rate < 20000)
         {
+            av_log(format_ctx, AV_LOG_TRACE, "Parsed bitrate was too low, multiplying up by 1000\n");
             avst->codecpar->bit_rate *= 1000;
         }
     }
@@ -196,6 +212,7 @@ static int read_header(AVFormatContext * format_ctx)
         if (memcmp(&demux_ctx->file_header.formattype, &PANR_FORMAT_WaveFormatEx, sizeof(GUID)) != 0)
         {
             ret = AVERROR_INVALIDDATA;
+            av_log(format_ctx, AV_LOG_ERROR, "Detected audio format header type was not WaveFormatEx, and is thus not supported \n");
             goto Cleanup;
         }
 
@@ -206,25 +223,28 @@ static int read_header(AVFormatContext * format_ctx)
 
         avst->codecpar->profile = FF_PROFILE_AAC_LOW;
         avst->codecpar->channels = wave_format->nChannels;
-        avst->codecpar->channel_layout = wave_format->nChannels == 2? AV_CH_LAYOUT_STEREO : AV_CH_LAYOUT_MONO;
+        avst->codecpar->channel_layout = wave_format->nChannels == 2 ? AV_CH_LAYOUT_STEREO : AV_CH_LAYOUT_MONO;
         avst->codecpar->sample_rate = wave_format->nSamplesPerSec;
         avst->codecpar->block_align = wave_format->nBlockAlign;
-        avst->codecpar->frame_size = wave_format->wBitsPerSample;
 
-        avst->codec->codec_type = AVMEDIA_TYPE_AUDIO;
-        avst->codec->codec_id = AV_CODEC_ID_AAC;
-        avst->codec->codec_tag = MKTAG('m', 'p', '4', 'a');
-
-        avst->codec->profile = FF_PROFILE_AAC_LOW;
-        avst->codec->channels = wave_format->nChannels;
-        avst->codec->channel_layout = wave_format->nChannels == 2? AV_CH_LAYOUT_STEREO : AV_CH_LAYOUT_MONO;
-        avst->codec->sample_rate = wave_format->nSamplesPerSec;
-        avst->codec->block_align = wave_format->nBlockAlign;
-        avst->codec->frame_size = wave_format->wBitsPerSample;
+        // prepare some data to emit in the esds audio specific config via side_data
+        // see https://wiki.multimedia.cx/index.php?title=MPEG-4_Audio
+        // (more context: https://stackoverflow.com/questions/3987850/mp4-atom-how-to-discriminate-the-audio-codec-is-it-aac-or-mp3)
+        demux_ctx->audio_object_type = AOT_AAC_LC;
+        demux_ctx->audio_sampling_index = 0;
+        for (int i = 0; i < sizeof(avpriv_mpeg4audio_sample_rates) / sizeof(avpriv_mpeg4audio_sample_rates[0]); i++)
+        {
+            if (avst->codecpar->sample_rate == avpriv_mpeg4audio_sample_rates[i])
+            {
+                demux_ctx->audio_sampling_index = i;
+            }
+        }
+        demux_ctx->audio_channel_config = wave_format->nChannels > 0 ? wave_format->nChannels : 1;
     }
     else
     {
         ret = AVERROR_INVALIDDATA;
+        av_log(format_ctx, AV_LOG_ERROR, "Unrecognized major type - unable to parse this data\n");
         goto Cleanup;
     }
     
@@ -232,6 +252,7 @@ static int read_header(AVFormatContext * format_ctx)
     if (!demux_ctx->sample_index)
     {
         ret = AVERROR(ENOMEM);
+        av_log(format_ctx, AV_LOG_ERROR, "Failed to allocate a PanrSampleIndex in read_header\n");
         goto Cleanup;
     }
     demux_ctx->sample_index->next = NULL;
@@ -248,20 +269,23 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
     int ret = 0, buffer_read_size;
     int64_t marker_pos;
     int64_t pkt_pts;
+    int started_data_gap_scan = 0;
 
     do
     {
         if (avio_feof(ctx->pb))
         {
             ret = AVERROR_EOF;
+            av_log(ctx, AV_LOG_TRACE, "End of file encountered\n");
             goto Cleanup;
         }
 
         marker_pos = avio_tell(ctx->pb);
         buffer_read_size = avio_read(ctx->pb, (uint8_t*) &raw_header, sizeof(raw_header));
-        if ( buffer_read_size < sizeof(raw_header))
+        if (buffer_read_size < sizeof(raw_header))
         {
             ret = AVERROR_INVALIDDATA;
+            av_log(ctx, AV_LOG_INFO, "End of file encountered while trying to read the raw header size, ending parsing. Read %d bytes\n", buffer_read_size);
             goto Cleanup;
         }
         
@@ -274,8 +298,14 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
             }
         }
 
+        if (started_data_gap_scan == 0)
+        {
+            av_log(ctx, AV_LOG_WARNING, "Failed to detect the next sample immediately, scanning forawrd in the file to find the next sample header. Position: %lld \n", marker_pos);
+        }
+
         // otherwise seek backwards and check the next byte
         avio_seek(ctx->pb, -sizeof(PanrSampleHeader) + 1, SEEK_CUR);
+        started_data_gap_scan = 1;
     } while (1);
     
     // for now we fully rely on the downstream components
@@ -339,6 +369,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
             break;
         }
         
+        av_log(ctx, AV_LOG_TRACE, "Sample at %llu has relative time delta of %d, last_pts was %lld\n", marker_pos, start_delta, last_pts);
         pkt_pts = last_pts + start_delta;
         
         // read AND ALWAYS ignore the end time - there was a bug in a
@@ -352,6 +383,8 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
         // read AND ALWAYS ignore the end time - there was a bug in a
         // panr source that consistently corrupted this
         avio_rl64(ctx->pb);
+
+        av_log(ctx, AV_LOG_TRACE, "Sample at %llu has an absolute start time pf %llu\n", marker_pos, pkt_pts);
     }
     else
     {
@@ -371,10 +404,13 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
     if (av_get_packet(ctx->pb, pkt, raw_header.data_length) != raw_header.data_length)
     {
         ret = AVERROR_INVALIDDATA;
+        av_log(ctx, AV_LOG_WARNING, "Failed to read the packet at byte %llu due to an end of file being reached\n", marker_pos);
         av_packet_unref(pkt);
         goto Cleanup;
     }
     pkt->pts = pkt_pts;
+    // if we have an unknown duration set it here to 0
+    pkt->duration = 0;
     
     if (raw_header.syncpoint)
     {
@@ -398,6 +434,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
             if (!cur_idx->next )
             {
                 ret = AVERROR(ENOMEM);
+                av_log(ctx, AV_LOG_ERROR, "Failed to allocate a PanrSampleIndex when increasing the sample buffer size\n");
                 goto Cleanup;
             }
             cur_idx = cur_idx->next;
@@ -415,11 +452,49 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
     if (pkt->pts != AV_NOPTS_VALUE)
     {
         av_add_index_entry(ctx->streams[0],
-                            marker_pos, 
+                            marker_pos,
                             pkt->pts,
                             avio_tell(ctx->pb) - marker_pos,
                             0,  // distance 
                             raw_header.syncpoint? AVINDEX_KEYFRAME : 0);
+
+        av_log(ctx,
+            AV_LOG_TRACE,
+            "Recording sample at 0x%llx of 0x%llx bytes. pts %llu, keyframe:%d \n",
+            marker_pos,
+            avio_tell(ctx->pb) - marker_pos,
+            pkt->pts,
+            raw_header.syncpoint? AVINDEX_KEYFRAME : 0);
+    }
+    else
+    {
+        av_log(ctx, AV_LOG_INFO, "Sample at %llu has no detected pts\n", marker_pos);
+    }
+
+    if (demux_ctx->first_sample && memcmp(&demux_ctx->file_header.majortype, &PANR_MEDIATYPE_Audio, sizeof(GUID)) == 0)
+    {
+        PutBitContext put_bit_ctx;
+        uint8_t *side_data;
+        av_log(ctx, AV_LOG_DEBUG, "Emitting audio specific extradata for the first audio sample\n");
+
+        side_data = av_packet_new_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA, 2);
+        if (!side_data)
+        {
+            ret = AVERROR(ENOMEM);
+            av_log(ctx, AV_LOG_ERROR, "Failed to allocate a packet side data\n");
+            goto Cleanup;
+        }
+
+        init_put_bits(&put_bit_ctx, side_data, 2);
+        put_bits(&put_bit_ctx, 5, demux_ctx->audio_object_type); // object_type
+        put_bits(&put_bit_ctx, 4, demux_ctx->audio_sampling_index); // sampling_index
+        put_bits(&put_bit_ctx, 4, demux_ctx->audio_channel_config); // chan_config
+        put_bits(&put_bit_ctx, 1, 0); //frame length - 1024 samples
+        put_bits(&put_bit_ctx, 1, 0); //does not depend on core coder
+        put_bits(&put_bit_ctx, 1, 0); //is not extension
+        flush_put_bits(&put_bit_ctx);
+
+        demux_ctx->first_sample = 0;
     }
 
 Cleanup:
@@ -447,5 +522,5 @@ AVInputFormat ff_panr_demuxer = {
     .read_header = read_header,
     .read_packet = read_packet,
     .read_close = read_close,
-    .flags =AVFMT_GENERIC_INDEX | AVFMT_TS_DISCONT
+    .flags = AVFMT_GLOBALHEADER | AVFMT_GENERIC_INDEX | AVFMT_TS_DISCONT
 };

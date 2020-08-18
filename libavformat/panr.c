@@ -284,7 +284,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
         buffer_read_size = avio_read(ctx->pb, (uint8_t*) &raw_header, sizeof(raw_header));
         if (buffer_read_size < sizeof(raw_header))
         {
-            ret = AVERROR_INVALIDDATA;
+            ret = AVERROR_EOF;
             av_log(ctx, AV_LOG_INFO, "End of file encountered while trying to read the raw header size, ending parsing. Read %d bytes\n", buffer_read_size);
             goto Cleanup;
         }
@@ -300,7 +300,9 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
 
         if (started_data_gap_scan == 0)
         {
-            av_log(ctx, AV_LOG_WARNING, "Failed to detect the next sample immediately, scanning forawrd in the file to find the next sample header. Position: %lld \n", marker_pos);
+            av_log(ctx,
+                AV_LOG_WARNING,
+                "Failed to detect the next sample immediately, scanning forawrd in the file to find the next sample header. Position: %" PRId64 " \n", marker_pos);
         }
 
         // otherwise seek backwards and check the next byte
@@ -368,8 +370,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
             
             break;
         }
-        
-        av_log(ctx, AV_LOG_TRACE, "Sample at %llu has relative time delta of %d, last_pts was %lld\n", marker_pos, start_delta, last_pts);
+
         pkt_pts = last_pts + start_delta;
         
         // read AND ALWAYS ignore the end time - there was a bug in a
@@ -383,8 +384,6 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
         // read AND ALWAYS ignore the end time - there was a bug in a
         // panr source that consistently corrupted this
         avio_rl64(ctx->pb);
-
-        av_log(ctx, AV_LOG_TRACE, "Sample at %llu has an absolute start time pf %llu\n", marker_pos, pkt_pts);
     }
     else
     {
@@ -404,7 +403,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
     if (av_get_packet(ctx->pb, pkt, raw_header.data_length) != raw_header.data_length)
     {
         ret = AVERROR_INVALIDDATA;
-        av_log(ctx, AV_LOG_WARNING, "Failed to read the packet at byte %llu due to an end of file being reached\n", marker_pos);
+        av_log(ctx, AV_LOG_WARNING, "Failed to read the packet at byte %" PRIu64 " due to an end of file being reached\n", marker_pos);
         av_packet_unref(pkt);
         goto Cleanup;
     }
@@ -457,18 +456,10 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
                             avio_tell(ctx->pb) - marker_pos,
                             0,  // distance 
                             raw_header.syncpoint? AVINDEX_KEYFRAME : 0);
-
-        av_log(ctx,
-            AV_LOG_TRACE,
-            "Recording sample at 0x%llx of 0x%llx bytes. pts %llu, keyframe:%d \n",
-            marker_pos,
-            avio_tell(ctx->pb) - marker_pos,
-            pkt->pts,
-            raw_header.syncpoint? AVINDEX_KEYFRAME : 0);
     }
     else
     {
-        av_log(ctx, AV_LOG_INFO, "Sample at %llu has no detected pts\n", marker_pos);
+        av_log(ctx, AV_LOG_INFO, "Sample at %" PRIu64 " has no detected pts\n", marker_pos);
     }
 
     if (demux_ctx->first_sample && memcmp(&demux_ctx->file_header.majortype, &PANR_MEDIATYPE_Audio, sizeof(GUID)) == 0)

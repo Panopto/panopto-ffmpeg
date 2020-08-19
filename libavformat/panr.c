@@ -231,14 +231,26 @@ static int read_header(AVFormatContext * format_ctx)
         // see https://wiki.multimedia.cx/index.php?title=MPEG-4_Audio
         // (more context: https://stackoverflow.com/questions/3987850/mp4-atom-how-to-discriminate-the-audio-codec-is-it-aac-or-mp3)
         demux_ctx->audio_object_type = AOT_AAC_LC;
-        demux_ctx->audio_sampling_index = 0;
+        demux_ctx->audio_sampling_index = UINT_MAX;
         for (int i = 0; i < sizeof(avpriv_mpeg4audio_sample_rates) / sizeof(avpriv_mpeg4audio_sample_rates[0]); i++)
         {
             if (avst->codecpar->sample_rate == avpriv_mpeg4audio_sample_rates[i])
             {
                 demux_ctx->audio_sampling_index = i;
+                break;
             }
         }
+
+        if (demux_ctx->audio_sampling_index == UINT_MAX)
+        {
+            // default to 44.1 if we don't find a match
+            demux_ctx->audio_sampling_index = 4;
+            av_log(format_ctx,
+                AV_LOG_WARNING,
+                "Could not find a sample rate index match for sample rate %d, defaulting to 44100\n",
+                avst->codecpar->sample_rate);
+        }
+
         demux_ctx->audio_channel_config = wave_format->nChannels > 0 ? wave_format->nChannels : 1;
     }
     else

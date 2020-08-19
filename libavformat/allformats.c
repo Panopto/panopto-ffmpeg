@@ -289,6 +289,7 @@ extern AVInputFormat  ff_oma_demuxer;
 extern AVOutputFormat ff_oma_muxer;
 extern AVOutputFormat ff_opus_muxer;
 extern AVInputFormat  ff_paf_demuxer;
+extern AVInputFormat  ff_panr_demuxer;
 extern AVInputFormat  ff_pcm_alaw_demuxer;
 extern AVOutputFormat ff_pcm_alaw_muxer;
 extern AVInputFormat  ff_pcm_mulaw_demuxer;

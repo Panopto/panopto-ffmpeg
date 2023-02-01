@@ -1,6 +1,9 @@
 /*
-* Panr* Structure Definition
-* Copyright (c) 2017 Dsessions
+* Panopto Raw File (PANR)
+*   *.panra = audio only
+*   *.panrv = video only
+*
+* Copyright (c) 2023 Panopto
 *
 * This file is part of FFmpeg.
 *
@@ -70,12 +73,12 @@ typedef struct PanrSampleFileHeader
 // 1 byte - 8 bit flags
 // 4 bytes - length of data body (N)
 // Sample time section
-//    If fTimeAbsolute = 1, time information is 8 byte absoltue value. 
+//    If fTimeAbsolute = 1, time information is 8 byte absoltue value.
 //    If fTimeRelative = 1, time information is 4 byte relative value from the previous sample.
 //   0 or 4 or 8 bytes - start time
 //   0 or 4 or 8 bytes - end time (DO NOT USE - INCONSISTENT)
 // Media time section
-//    If fMediaTimeAbsolute = 1, media time information is 8 byte absoltue value. 
+//    If fMediaTimeAbsolute = 1, media time information is 8 byte absoltue value.
 //    If fMediaTimeRelative = 1, media time information is 4 byte relative value from the previous sample.
 //   0 or 4 or 8 bytes - start media time
 //   0 or 4 or 8 bytes - end media time (DO NOT USE - INCONSISTENT)

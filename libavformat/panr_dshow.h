@@ -1,5 +1,5 @@
 /*
-* DShow Structure Definition Copies
+* DirectShow Structures that are used as part of PANR (Panopto Raw) files.
 *
 * This file is part of FFmpeg.
 *
@@ -149,9 +149,9 @@ typedef struct PANR_AMMediaType
 
 typedef struct PANR_AM_MPEGSTREAMTYPE
 {
-    int32_t             dwStreamId; 
-    int32_t             dwReserved; 
-    PANR_AM_MEDIA_TYPE     mt; 
+    int32_t             dwStreamId;
+    int32_t             dwReserved;
+    PANR_AM_MEDIA_TYPE     mt;
     int8_t              bFormat[1];
 } __attribute__((ms_struct)) PANR_AM_MPEGSTREAMTYPE;
 

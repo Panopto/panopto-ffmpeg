@@ -1,6 +1,9 @@
 /*
-* Panopto Raw File
-* Copyright (c) 2017 Derek Sessions
+* Panopto Raw File (PANR)
+*   *.panra = audio only
+*   *.panrv = video only
+*
+* Copyright (c) 2023 Panopto
 *
 * This file is part of FFmpeg.
 *
@@ -75,7 +78,7 @@ static int read_probe(const AVProbeData *probe_data)
 static int extract_video_format_block_info(GUID* format_type, int8_t* format_block, AVStream* avst)
 {
     int ret = 0;
-    
+
     // numerator should always be 1 second in 100 ns ticks to match dshow behavior
     avst->avg_frame_rate.num = 1000;
     if (memcmp(format_type, &PANR_FORMAT_VideoInfo, sizeof(GUID)) == 0)
@@ -104,7 +107,7 @@ static int extract_video_format_block_info(GUID* format_type, int8_t* format_blo
             ret = AVERROR_INVALIDDATA;
             goto Cleanup;
         }
-    
+
         avst->codecpar->bit_rate = vih->dwBitRate;
         ret = extract_video_format_block_info(
             &vih->Streams[0].mt.formattype,
@@ -140,7 +143,7 @@ static int read_header(AVFormatContext * format_ctx)
     demux_ctx->sample_index = NULL;
     demux_ctx->format_block = NULL;
     demux_ctx->first_sample = 1;
-    
+
     if (avio_read(pBuffer, (uint8_t*) &demux_ctx->file_header, sizeof(PanrSampleFileHeader))
             != sizeof(PanrSampleFileHeader))
     {
@@ -156,7 +159,7 @@ static int read_header(AVFormatContext * format_ctx)
         av_log(format_ctx, AV_LOG_ERROR, "Failed allocate the header format block memory\n");
         goto Cleanup;
     }
-    
+
     if (avio_read(pBuffer, (uint8_t*) demux_ctx->format_block, demux_ctx->file_header.cb_format)
             != demux_ctx->file_header.cb_format)
     {
@@ -164,7 +167,7 @@ static int read_header(AVFormatContext * format_ctx)
         av_log(format_ctx, AV_LOG_ERROR, "Failed to read  header format block memory from the file due to insufficent data\n");
         goto Cleanup;
     }
-    
+
     avst = avformat_new_stream(format_ctx, NULL);
     if (!avst)
     {
@@ -172,32 +175,34 @@ static int read_header(AVFormatContext * format_ctx)
         av_log(format_ctx, AV_LOG_ERROR, "Failed to allocate a new stream\n");
         goto Cleanup;
     }
-    
+
     // set the pts info to match dshow timestamps
     avpriv_set_pts_info(avst, 64, 1, 10000000);
 
-    // use parse_full here - make the decoder 
+    // use parse_full here - make the decoder
     // do all the hard work about detection. We'll
     // just manage proper unpacking
     avst->nb_frames = 0;
-    avst->need_parsing = AVSTREAM_PARSE_NONE;
+
+    // For ffmpeg 5.1.2 build, we noticed that this field does not exist anymore.
+    // avst->need_parsing = AVSTREAM_PARSE_NONE;
 
     if (memcmp(&demux_ctx->file_header.majortype, &PANR_MEDIATYPE_Video, sizeof(GUID)) == 0)
     {
         avst->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
         avst->codecpar->codec_id = AV_CODEC_ID_H264;
-        
+
         ret = extract_video_format_block_info(
-                        &demux_ctx->file_header.formattype, 
-                        demux_ctx->format_block, 
+                        &demux_ctx->file_header.formattype,
+                        demux_ctx->format_block,
                         avst);
-                        
+
         if (ret != 0)
         {
             av_log(format_ctx, AV_LOG_DEBUG, "extract_video_format_block_info returned a non-zero error code %d\n", ret);
             goto Cleanup;
         }
-        
+
         // for some reason sometimes this is in kilobits
         // and other times in bits...just apply a heuristic
         // to try to get it right
@@ -232,9 +237,9 @@ static int read_header(AVFormatContext * format_ctx)
         // (more context: https://stackoverflow.com/questions/3987850/mp4-atom-how-to-discriminate-the-audio-codec-is-it-aac-or-mp3)
         demux_ctx->audio_object_type = AOT_AAC_LC;
         demux_ctx->audio_sampling_index = UINT_MAX;
-        for (int i = 0; i < sizeof(avpriv_mpeg4audio_sample_rates) / sizeof(avpriv_mpeg4audio_sample_rates[0]); i++)
+        for (int i = 0; i < sizeof(ff_mpeg4audio_sample_rates) / sizeof(ff_mpeg4audio_sample_rates[0]); i++)
         {
-            if (avst->codecpar->sample_rate == avpriv_mpeg4audio_sample_rates[i])
+            if (avst->codecpar->sample_rate == ff_mpeg4audio_sample_rates[i])
             {
                 demux_ctx->audio_sampling_index = i;
                 break;
@@ -259,7 +264,7 @@ static int read_header(AVFormatContext * format_ctx)
         av_log(format_ctx, AV_LOG_ERROR, "Unrecognized major type - unable to parse this data\n");
         goto Cleanup;
     }
-    
+
     demux_ctx->sample_index = (PanrSampleIndex*) av_malloc(sizeof(PanrSampleIndex));
     if (!demux_ctx->sample_index)
     {
@@ -300,7 +305,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
             av_log(ctx, AV_LOG_INFO, "End of file encountered while trying to read the raw header size, ending parsing. Read %d bytes\n", buffer_read_size);
             goto Cleanup;
         }
-        
+
         // make sure the header looks good
         if (raw_header.marker == raw_sample_signature)
         {
@@ -321,7 +326,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
         avio_seek(ctx->pb, -sizeof(PanrSampleHeader) + 1, SEEK_CUR);
         started_data_gap_scan = 1;
     } while (1);
-    
+
     // for now we fully rely on the downstream components
     // to extract the pts from the actual samples. This block
     // is left here in case we need to change to actually properly
@@ -331,7 +336,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
         PanrSampleIndex* cur_idx = demux_ctx->sample_index;
         int start_delta = avio_rl32(ctx->pb);
         int64_t last_pts = 0;
-        
+
         // find the last timestamp before this one
         while (cur_idx)
         {
@@ -344,14 +349,14 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
             {
                 break;
             }
-            
+
             // if we're outside the scope of what's in this buffer
             if (cur_idx->samples[cur_idx->next_open_idx - 1].file_pos < marker_pos)
             {
                 // no matter what we'll want to cache the last pts - either
                 // its the target or we need it in case the next block is empty
                 last_pts = cur_idx->samples[cur_idx->next_open_idx - 1].pts;
-                
+
                 // if the buffer was already full cache the last pts and move
                 // on to the next buffer
                 if (cur_idx->next_open_idx >= SAMPLE_INDEX_BUFFER_SIZE)
@@ -365,7 +370,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
                     break;
                 }
             }
-            
+
             // alright we know the answer is in this buffer somewhere...track it down!
             // always start from the back since in general we expect constant forward seeks
             // we can get away with open_idx - 2 here because the fall apart case is when
@@ -379,12 +384,12 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
                     break;
                 }
             }
-            
+
             break;
         }
 
         pkt_pts = last_pts + start_delta;
-        
+
         // read AND ALWAYS ignore the end time - there was a bug in a
         // panr source that consistently corrupted this
         avio_rl32(ctx->pb);
@@ -392,7 +397,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
     else if (raw_header.time_absolute)
     {
         pkt_pts  = avio_rl64(ctx->pb);
-        
+
         // read AND ALWAYS ignore the end time - there was a bug in a
         // panr source that consistently corrupted this
         avio_rl64(ctx->pb);
@@ -401,7 +406,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
     {
         pkt_pts = AV_NOPTS_VALUE;
     }
-    
+
     if (raw_header.media_time_absolute)
     {
         avio_rl64(ctx->pb);
@@ -422,12 +427,12 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
     pkt->pts = pkt_pts;
     // if we have an unknown duration set it here to 0
     pkt->duration = 0;
-    
+
     if (raw_header.syncpoint)
     {
         pkt->flags |= AV_PKT_FLAG_KEY;
     }
-    
+
     // record the pts for this sample position if it's a new max
     // there's no way to seek forward besides this so we're guaranteed
     // to be able to make some clever decisions here
@@ -438,7 +443,7 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
         {
             cur_idx = cur_idx->next;
         }
-        
+
         if (cur_idx->next_open_idx >= SAMPLE_INDEX_BUFFER_SIZE)
         {
             cur_idx->next = (PanrSampleIndex*) av_malloc(sizeof(PanrSampleIndex));
@@ -452,21 +457,21 @@ static int read_packet(AVFormatContext *ctx, AVPacket *pkt)
             cur_idx->next = NULL;
             cur_idx->next_open_idx = 0;
         }
-        
+
         cur_idx->samples[cur_idx->next_open_idx].file_pos = marker_pos;
         cur_idx->samples[cur_idx->next_open_idx].pts = pkt->pts;
         cur_idx->next_open_idx++;
-        
+
         demux_ctx->last_sample_pos = marker_pos;
     }
-    
+
     if (pkt->pts != AV_NOPTS_VALUE)
     {
         av_add_index_entry(ctx->streams[0],
                             marker_pos,
                             pkt->pts,
                             avio_tell(ctx->pb) - marker_pos,
-                            0,  // distance 
+                            0,  // distance
                             raw_header.syncpoint? AVINDEX_KEYFRAME : 0);
     }
     else
@@ -507,7 +512,7 @@ Cleanup:
 static int read_close(AVFormatContext *ctx)
 {
     PanrDemuxContext* demux_ctx = ctx->priv_data;
-    
+
     if (demux_ctx->format_block)
     {
         av_free(demux_ctx->format_block);

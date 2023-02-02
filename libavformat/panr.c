@@ -26,7 +26,7 @@
 #include "libavutil/channel_layout.h"
 #include "libavcodec/mpeg4audio.h"
 #include "internal.h"
-#include "dshow.h"
+#include "panr_dshow.h"
 #include "panr.h"
 
 

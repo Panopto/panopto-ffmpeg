@@ -320,6 +320,7 @@ extern const AVInputFormat  ff_oma_demuxer;
 extern const AVOutputFormat ff_oma_muxer;
 extern const AVOutputFormat ff_opus_muxer;
 extern const AVInputFormat  ff_paf_demuxer;
+extern const AVInputFormat  ff_panr_demuxer;
 extern const AVInputFormat  ff_pcm_alaw_demuxer;
 extern const AVOutputFormat ff_pcm_alaw_muxer;
 extern const AVInputFormat  ff_pcm_mulaw_demuxer;
